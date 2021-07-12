@@ -68,7 +68,7 @@ module RBS
       @stderr = stderr
     end
 
-    COMMANDS = [:ast, :list, :ancestors, :methods, :method, :validate, :constant, :paths, :prototype, :vendor, :parse, :test]
+    COMMANDS = [:ast, :list, :ancestors, :methods, :method, :validate, :constant, :paths, :prototype, :vendor, :parse, :test, :collection]
 
     def parse_logging_options(opts)
       opts.on("--log-level LEVEL", "Specify log level (defaults to `warn`)") do |level|
@@ -823,6 +823,60 @@ EOB
       stderr.print(err)
 
       status
+    end
+
+    def run_collection(args, options)
+      _argv, params = parse_collection_options(args)
+      config_path = params[:config]
+      lock_path = Collection::Config.to_lockfile_path(config_path)
+
+      case args[0]
+      when 'install'
+        unless params[:frozen]
+          Collection::Config.generate_lockfile(config_path: config_path, gemfile_lock_path: Pathname('./Gemfile.lock'))
+        end
+        Collection::Installer.new(lockfile_path: lock_path).install_from_lockfile
+      when 'update'
+        # TODO: Be aware of argv to update only specified gem
+        Collection::Config.generate_lockfile(config_path: config_path, gemfile_lock_path: Pathname('./Gemfile.lock'), with_lockfile: false)
+        Collection::Installer.new(lockfile_path: lock_path).install_from_lockfile
+      when 'init'
+        if config_path.exist?
+          puts "#{config_path} already exists"
+          exit 1
+        end
+
+        config_path.write(<<~'YAML')
+          # Download sources
+          collections:
+            - name: ruby/gem_rbs_collection
+              remote: https://github.com/ruby/gem_rbs_collection.git
+              revision: main
+              repo_dir: gems
+
+          # A directory to install the downloaded RBSs
+          path: .gem_rbs_collection
+
+          gems: []
+        YAML
+      when 'clean'
+        unless lock_path.exist?
+          puts "#{lock_path} should exist to clean"
+          exit 1
+        end
+        Collection::Cleaner.new(Collection::Config.from_path(lock_path))
+      else
+        raise
+      end
+    end
+
+    def parse_collection_options(args)
+      opts = OptionParser.new do |opts|
+        opts.on("--config PATH")
+        opts.on('--frozen') if args[0] == 'install'
+      end
+      params = { config: Collection::Config::PATH }
+      return opts.order(args[1..], into: params), params
     end
   end
 end
